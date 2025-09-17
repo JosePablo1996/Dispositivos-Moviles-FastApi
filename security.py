@@ -1,14 +1,8 @@
-
 from fastapi import Security, HTTPException, status
 from fastapi.security import APIKeyHeader
-from typing import Optional
 import os
-from dotenv import load_dotenv
 
-# Cargar variables de entorno
-load_dotenv()
-
-# Leer API keys desde variables de entorno
+# Leer API keys desde variables de entorno (sin dotenv)
 API_KEYS = os.getenv("API_KEYS", "gestor_estudiantes_key_2025,android_app_key_2025,desarrollo_key_2025").split(",")
 
 api_key_header = APIKeyHeader(name="X-API-Key", auto_error=False)
@@ -30,7 +24,6 @@ async def validate_api_key(api_key_header: str = Security(api_key_header)) -> st
         headers={"WWW-Authenticate": "APIKey"},
     )
 
-# Función alternativa para usar como dependencia en endpoints específicos
 async def get_api_key(api_key: str = Security(api_key_header)):
     if api_key in API_KEYS:
         return api_key
