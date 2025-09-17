@@ -5,6 +5,11 @@ from sqlalchemy import create_engine, Column, Integer, String
 from sqlalchemy.orm import declarative_base, sessionmaker, Session
 from urllib.parse import quote_plus
 import os
+import logging
+
+# Configurar logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 # Obtener la contraseña de variable de entorno o usar la predeterminada
 PASSWORD = os.getenv("DB_PASSWORD", "uPxBHn]Ag9H~N4'K")
@@ -19,9 +24,14 @@ DATABASE_URL = os.getenv(
 )
 
 # Configuración de la base de datos con SQLAlchemy
-engine = create_engine(DATABASE_URL)
-SessionLocal = sessionmaker(bind=engine, autoflush=False, autocommit=False)
-Base = declarative_base()
+try:
+    engine = create_engine(DATABASE_URL, pool_pre_ping=True)
+    SessionLocal = sessionmaker(bind=engine, autoflush=False, autocommit=False)
+    Base = declarative_base()
+    logger.info("Conexión a la base de datos configurada exitosamente")
+except Exception as e:
+    logger.error(f"Error al configurar la base de datos: {e}")
+    raise
 
 # Definir el modelo de la base de datos para la tabla 'estudiantes'
 class Estudiante(Base):
@@ -29,32 +39,52 @@ class Estudiante(Base):
     id = Column(Integer, primary_key=True, index=True, autoincrement=True)
     nombre = Column(String(100), index=True)
     edad = Column(Integer)
+    email = Column(String(100), unique=True, nullable=True)  # Nuevo campo
+    carrera = Column(String(100), nullable=True)  # Nuevo campo
 
 # Crear las tablas en la base de datos si no existen
-# Esto es útil para la configuración inicial. Si las tablas ya existen, no hace nada.
-Base.metadata.create_all(bind=engine)
+try:
+    Base.metadata.create_all(bind=engine)
+    logger.info("Tablas de la base de datos verificadas/creadas")
+except Exception as e:
+    logger.error(f"Error al crear tablas: {e}")
 
 # Esquema Pydantic para validación de datos
 class EstudianteSchema(BaseModel):
     nombre: str
     edad: int
+    email: str = None  # Nuevo campo opcional
+    carrera: str = None  # Nuevo campo opcional
 
     class Config:
         json_schema_extra = {
             "example": {
                 "nombre": "Juan Pérez",
-                "edad": 25
+                "edad": 25,
+                "email": "juan@email.com",
+                "carrera": "Ingeniería en Sistemas"
             }
         }
 
+class EstudianteUpdateSchema(BaseModel):
+    nombre: str = None
+    edad: int = None
+    email: str = None
+    carrera: str = None
+
 # Inicializar la aplicación FastAPI
-app = FastAPI(title="API de Estudiantes", version="1.0.0", description="Una API para gestionar información de estudiantes.")
+app = FastAPI(
+    title="API de Gestión de Estudiantes",
+    version="2.0.0",
+    description="API completa para gestión de información estudiantil con PostgreSQL",
+    docs_url="/docs",
+    redoc_url="/redoc"
+)
 
 # Configuración de CORS
-origins = ["*"]
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=origins,
+    allow_origins=["*"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -68,68 +98,105 @@ def get_db():
     finally:
         db.close()
 
-# Rutas de la API
+# Middleware para logging de requests
+@app.middleware("http")
+async def log_requests(request, call_next):
+    logger.info(f"Request: {request.method} {request.url}")
+    response = await call_next(request)
+    logger.info(f"Response: {response.status_code}")
+    return response
 
+# Rutas de la API
 @app.get("/", tags=["Home"], summary="Saludo de la API")
 def home():
-    """
-    Retorna un mensaje de bienvenida.
-    """
-    return {"message": "Bienvenido a la API de estudiantes!"}
+    return {"message": "Bienvenido a la API de estudiantes!", "version": "2.0.0"}
 
 @app.get("/estudiantes/", tags=["Estudiantes"], summary="Obtiene todos los estudiantes")
 def obtener_estudiantes(db: Session = Depends(get_db)):
-    """
-    Obtiene la lista completa de todos los estudiantes registrados en la base de datos.
-    """
     estudiantes = db.query(Estudiante).all()
-    return [{"id": est.id, "nombre": est.nombre, "edad": est.edad} for est in estudiantes]
+    return {
+        "count": len(estudiantes),
+        "estudiantes": [
+            {
+                "id": est.id, 
+                "nombre": est.nombre, 
+                "edad": est.edad,
+                "email": est.email,
+                "carrera": est.carrera
+            } for est in estudiantes
+        ]
+    }
 
 @app.get("/estudiantes/{id}", tags=["Estudiantes"], summary="Obtiene un estudiante por ID")
-def obtener_estudiante_por_id(id: int = Path(..., description="ID del estudiante a obtener", ge=1), db: Session = Depends(get_db)):
-    """
-    Obtiene la información de un estudiante específico usando su ID.
-    - **ID**: ID del estudiante
-    """
+def obtener_estudiante_por_id(id: int = Path(..., ge=1), db: Session = Depends(get_db)):
     estudiante = db.query(Estudiante).filter(Estudiante.id == id).first()
     if not estudiante:
         raise HTTPException(status_code=404, detail="Estudiante no encontrado")
-    return {"id": estudiante.id, "nombre": estudiante.nombre, "edad": estudiante.edad}
+    return estudiante
 
 @app.post("/estudiantes/", tags=["Estudiantes"], summary="Crea un nuevo estudiante")
 def crear_estudiante(estudiante: EstudianteSchema, db: Session = Depends(get_db)):
-    """
-    Crea un nuevo estudiante en la base de datos.
-    """
-    db_estudiante = Estudiante(nombre=estudiante.nombre, edad=estudiante.edad)
+    # Verificar si el email ya existe
+    if estudiante.email:
+        existing = db.query(Estudiante).filter(Estudiante.email == estudiante.email).first()
+        if existing:
+            raise HTTPException(status_code=400, detail="El email ya está registrado")
+    
+    db_estudiante = Estudiante(**estudiante.dict())
     db.add(db_estudiante)
     db.commit()
     db.refresh(db_estudiante)
-    return {"mensaje": "Estudiante creado exitosamente.", "estudiante": {"id": db_estudiante.id, "nombre": db_estudiante.nombre, "edad": db_estudiante.edad}}
+    return {
+        "mensaje": "Estudiante creado exitosamente",
+        "estudiante": db_estudiante
+    }
 
 @app.put("/estudiantes/{id}", tags=["Estudiantes"], summary="Modifica un estudiante existente")
-def modificar_estudiante(id: int, estudiante: EstudianteSchema, db: Session = Depends(get_db)):
-    """
-    Modifica la información de un estudiante existente.
-    """
+def modificar_estudiante(id: int, estudiante: EstudianteUpdateSchema, db: Session = Depends(get_db)):
     est = db.query(Estudiante).filter(Estudiante.id == id).first()
     if not est:
         raise HTTPException(status_code=404, detail="Estudiante no encontrado")
-    est.nombre = estudiante.nombre
-    est.edad = estudiante.edad
+    
+    # Actualizar solo los campos proporcionados
+    update_data = estudiante.dict(exclude_unset=True)
+    for field, value in update_data.items():
+        setattr(est, field, value)
+    
     db.commit()
     db.refresh(est)
-    return {"mensaje": "Estudiante actualizado.", "data": {"id": est.id, "nombre": est.nombre, "edad": est.edad}}
+    return {
+        "mensaje": "Estudiante actualizado",
+        "estudiante": est
+    }
 
 @app.delete("/estudiantes/{id}", tags=["Estudiantes"], summary="Elimina un estudiante")
 def eliminar_estudiante(id: int, db: Session = Depends(get_db)):
-    """
-    Elimina un estudiante de la base de datos por ID.
-    - **ID**: ID del estudiante
-    """
     est = db.query(Estudiante).filter(Estudiante.id == id).first()
     if not est:
         raise HTTPException(status_code=404, detail="Estudiante no encontrado")
+    
     db.delete(est)
     db.commit()
-    return {"mensaje": "Estudiante eliminado exitosamente."}
+    return {"mensaje": "Estudiante eliminado exitosamente"}
+
+# Nueva ruta para health check
+@app.get("/health", tags=["Health"], summary="Verifica el estado de la API")
+def health_check(db: Session = Depends(get_db)):
+    try:
+        db.execute("SELECT 1")
+        return {
+            "status": "healthy",
+            "database": "connected",
+            "version": "2.0.0"
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Database error: {str(e)}")
+
+# Manejo de excepciones global
+@app.exception_handler(Exception)
+async def global_exception_handler(request, exc):
+    logger.error(f"Error no manejado: {exc}")
+    return JSONResponse(
+        status_code=500,
+        content={"message": "Error interno del servidor"}
+    )
