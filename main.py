@@ -18,7 +18,7 @@ logger = logging.getLogger(__name__)
 PASSWORD = os.getenv("DB_PASSWORD", "uPxBHn]Ag9H~N4'K")
 ENCODED_PASSWORD = quote_plus(PASSWORD)
 
-# URL de conexión a tu base de datos EXISTENTE
+# URL de conexión a tu base de datos EXISTENTE - CORREGIDA: mq100216
 DATABASE_URL = os.getenv(
     "DATABASE_URL", 
     f"postgresql://postgres:{ENCODED_PASSWORD}@20.84.99.214:443/mq100216"
