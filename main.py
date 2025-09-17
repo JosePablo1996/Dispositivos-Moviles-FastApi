@@ -1,4 +1,4 @@
-from fastapi import FastAPI, HTTPException, Path, Depends
+from fastapi import FastAPI, HTTPException, Path, Depends, Security
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from sqlalchemy import create_engine, Column, Integer, String, text
@@ -6,6 +6,9 @@ from sqlalchemy.orm import declarative_base, sessionmaker, Session
 from urllib.parse import quote_plus
 import os
 import logging
+
+# Importar seguridad
+from security import validate_api_key, get_api_key
 
 # Configurar logging
 logging.basicConfig(level=logging.INFO)
@@ -103,53 +106,6 @@ def get_db():
 def home():
     return {"message": "Bienvenido a la API de estudiantes!", "database": "mq100216"}
 
-@app.get("/estudiantes/", response_model=list[EstudianteResponse], tags=["Estudiantes"])
-def obtener_estudiantes(db: Session = Depends(get_db)):
-    """Obtiene todos los estudiantes de la tabla existente"""
-    estudiantes = db.query(Estudiante).order_by(Estudiante.id).all()
-    return estudiantes
-
-@app.get("/estudiantes/{id}", response_model=EstudianteResponse, tags=["Estudiantes"])
-def obtener_estudiante_por_id(id: int = Path(..., ge=1), db: Session = Depends(get_db)):
-    """Obtiene un estudiante por ID"""
-    estudiante = db.query(Estudiante).filter(Estudiante.id == id).first()
-    if not estudiante:
-        raise HTTPException(status_code=404, detail="Estudiante no encontrado")
-    return estudiante
-
-@app.post("/estudiantes/", response_model=EstudianteResponse, tags=["Estudiantes"])
-def crear_estudiante(estudiante: EstudianteSchema, db: Session = Depends(get_db)):
-    """Crea un nuevo estudiante en la tabla existente"""
-    db_estudiante = Estudiante(nombre=estudiante.nombre, edad=estudiante.edad)
-    db.add(db_estudiante)
-    db.commit()
-    db.refresh(db_estudiante)
-    return db_estudiante
-
-@app.put("/estudiantes/{id}", response_model=EstudianteResponse, tags=["Estudiantes"])
-def modificar_estudiante(id: int, estudiante: EstudianteSchema, db: Session = Depends(get_db)):
-    """Modifica un estudiante existente"""
-    est = db.query(Estudiante).filter(Estudiante.id == id).first()
-    if not est:
-        raise HTTPException(status_code=404, detail="Estudiante no encontrado")
-    
-    est.nombre = estudiante.nombre
-    est.edad = estudiante.edad
-    db.commit()
-    db.refresh(est)
-    return est
-
-@app.delete("/estudiantes/{id}", tags=["Estudiantes"])
-def eliminar_estudiante(id: int, db: Session = Depends(get_db)):
-    """Elimina un estudiante"""
-    est = db.query(Estudiante).filter(Estudiante.id == id).first()
-    if not est:
-        raise HTTPException(status_code=404, detail="Estudiante no encontrado")
-    
-    db.delete(est)
-    db.commit()
-    return {"mensaje": "Estudiante eliminado exitosamente"}
-
 @app.get("/health", tags=["Health"])
 def health_check(db: Session = Depends(get_db)):
     """Verifica el estado de la conexión a la base de datos"""
@@ -167,9 +123,93 @@ def health_check(db: Session = Depends(get_db)):
         logger.error(f"Error en health check: {e}")
         raise HTTPException(status_code=500, detail=f"Error de base de datos: {str(e)}")
 
+# Endpoints públicos (no requieren API Key)
+@app.get("/public-info", tags=["Info"])
+def public_info():
+    """Información pública sobre la API"""
+    return {
+        "api_name": "Gestión de Estudiantes API",
+        "version": "2.0.0",
+        "description": "API para gestión de estudiantes",
+        "requires_api_key": True,
+        "endpoints_protected": True,
+        "api_key_required_for": ["/estudiantes", "/database-info"]
+    }
+
+# Endpoints protegidos (requieren API Key)
+@app.get("/estudiantes/", response_model=list[EstudianteResponse], tags=["Estudiantes"])
+def obtener_estudiantes(
+    db: Session = Depends(get_db),
+    api_key: str = Security(get_api_key)
+):
+    """Obtiene todos los estudiantes de la tabla existente (requiere API Key)"""
+    estudiantes = db.query(Estudiante).order_by(Estudiante.id).all()
+    return estudiantes
+
+@app.get("/estudiantes/{id}", response_model=EstudianteResponse, tags=["Estudiantes"])
+def obtener_estudiante_por_id(
+    id: int = Path(..., ge=1), 
+    db: Session = Depends(get_db),
+    api_key: str = Security(get_api_key)
+):
+    """Obtiene un estudiante por ID (requiere API Key)"""
+    estudiante = db.query(Estudiante).filter(Estudiante.id == id).first()
+    if not estudiante:
+        raise HTTPException(status_code=404, detail="Estudiante no encontrado")
+    return estudiante
+
+@app.post("/estudiantes/", response_model=EstudianteResponse, tags=["Estudiantes"])
+def crear_estudiante(
+    estudiante: EstudianteSchema, 
+    db: Session = Depends(get_db),
+    api_key: str = Security(get_api_key)
+):
+    """Crea un nuevo estudiante en la tabla existente (requiere API Key)"""
+    db_estudiante = Estudiante(nombre=estudiante.nombre, edad=estudiante.edad)
+    db.add(db_estudiante)
+    db.commit()
+    db.refresh(db_estudiante)
+    return db_estudiante
+
+@app.put("/estudiantes/{id}", response_model=EstudianteResponse, tags=["Estudiantes"])
+def modificar_estudiante(
+    id: int, 
+    estudiante: EstudianteSchema, 
+    db: Session = Depends(get_db),
+    api_key: str = Security(get_api_key)
+):
+    """Modifica un estudiante existente (requiere API Key)"""
+    est = db.query(Estudiante).filter(Estudiante.id == id).first()
+    if not est:
+        raise HTTPException(status_code=404, detail="Estudiante no encontrado")
+    
+    est.nombre = estudiante.nombre
+    est.edad = estudiante.edad
+    db.commit()
+    db.refresh(est)
+    return est
+
+@app.delete("/estudiantes/{id}", tags=["Estudiantes"])
+def eliminar_estudiante(
+    id: int, 
+    db: Session = Depends(get_db),
+    api_key: str = Security(get_api_key)
+):
+    """Elimina un estudiante (requiere API Key)"""
+    est = db.query(Estudiante).filter(Estudiante.id == id).first()
+    if not est:
+        raise HTTPException(status_code=404, detail="Estudiante no encontrado")
+    
+    db.delete(est)
+    db.commit()
+    return {"mensaje": "Estudiante eliminado exitosamente"}
+
 @app.get("/database-info", tags=["Debug"])
-def database_info(db: Session = Depends(get_db)):
-    """Información sobre la base de datos y tabla"""
+def database_info(
+    db: Session = Depends(get_db),
+    api_key: str = Security(get_api_key)
+):
+    """Información sobre la base de datos y tabla (requiere API Key)"""
     try:
         # Obtener información de la tabla
         result = db.execute(text("""
@@ -185,7 +225,19 @@ def database_info(db: Session = Depends(get_db)):
             "table_name": "estudiantes",
             "total_records": stats[0],
             "id_range": f"{stats[1]} - {stats[2]}",
-            "columns": ["id", "nombre", "edad"]
+            "columns": ["id", "nombre", "edad"],
+            "api_version": "2.0.0",
+            "security": "api_key_required"
         }
     except Exception as e:
         return {"error": str(e)}
+
+# Nuevo endpoint para verificar API Key
+@app.get("/verify-api-key", tags=["Security"])
+def verify_api_key(api_key: str = Security(get_api_key)):
+    """Verifica si una API Key es válida"""
+    return {
+        "valid": True,
+        "message": "API Key válida",
+        "permissions": ["read:estudiantes", "write:estudiantes", "delete:estudiantes"]
+    }
