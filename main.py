@@ -204,6 +204,38 @@ def eliminar_estudiante(
     db.commit()
     return {"mensaje": "Estudiante eliminado exitosamente"}
 
+@app.delete("/estudiantes/admin/delete-all", tags=["Estudiantes - Admin"])
+def eliminar_todos_estudiantes(
+    db: Session = Depends(get_db),
+    api_key: str = Security(get_api_key),
+    confirmacion: bool = False
+):
+    """Elimina TODOS los estudiantes (requiere confirmación)"""
+    
+    if not confirmacion:
+        raise HTTPException(
+            status_code=400,
+            detail="Se requiere confirmación: agregar ?confirmacion=true"
+        )
+    
+    try:
+        # Contar antes de eliminar
+        total_antes = db.query(Estudiante).count()
+        
+        # Eliminar todos
+        db.query(Estudiante).delete()
+        db.commit()
+        
+        return {
+            "mensaje": "Todos los estudiantes eliminados",
+            "eliminados": total_antes,
+            "restantes": 0
+        }
+        
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(status_code=500, detail=f"Error: {str(e)}")
+
 @app.get("/database-info", tags=["Debug"])
 def database_info(
     db: Session = Depends(get_db),
