@@ -1,7 +1,7 @@
 from fastapi import FastAPI, HTTPException, Path, Depends
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
-from sqlalchemy import create_engine, Column, Integer, String
+from sqlalchemy import create_engine, Column, Integer, String, text
 from sqlalchemy.orm import declarative_base, sessionmaker, Session
 from urllib.parse import quote_plus
 import os
@@ -11,72 +11,72 @@ import logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# Obtener la contraseña de variable de entorno o usar la predeterminada
+# Obtener la contraseña de variable de entorno
 PASSWORD = os.getenv("DB_PASSWORD", "uPxBHn]Ag9H~N4'K")
-
-# Codificar la contraseña para la URL
 ENCODED_PASSWORD = quote_plus(PASSWORD)
 
-# Usar variable de entorno para la URL de la base de datos con fallback
+# URL de conexión a tu base de datos EXISTENTE
 DATABASE_URL = os.getenv(
     "DATABASE_URL", 
     f"postgresql://postgres:{ENCODED_PASSWORD}@20.84.99.214:443/mq100216"
 )
 
-# Configuración de la base de datos con SQLAlchemy
+# Configuración de la base de datos
 try:
     engine = create_engine(DATABASE_URL, pool_pre_ping=True)
     SessionLocal = sessionmaker(bind=engine, autoflush=False, autocommit=False)
-    Base = declarative_base()
-    logger.info("Conexión a la base de datos configurada exitosamente")
+    
+    # Verificar conexión y estructura existente
+    with engine.connect() as conn:
+        result = conn.execute(text("SELECT column_name FROM information_schema.columns WHERE table_name = 'estudiantes'"))
+        existing_columns = [row[0] for row in result]
+        logger.info(f"Columnas existentes en la tabla: {existing_columns}")
+        
 except Exception as e:
-    logger.error(f"Error al configurar la base de datos: {e}")
+    logger.error(f"Error al conectar con la base de datos: {e}")
     raise
 
-# Definir el modelo de la base de datos para la tabla 'estudiantes'
+# Usar Base existente para compatibilidad
+Base = declarative_base()
+
+# Mapear la tabla EXISTENTE 'estudiantes'
 class Estudiante(Base):
-    __tablename__ = "estudiantes"
-    id = Column(Integer, primary_key=True, index=True, autoincrement=True)
-    nombre = Column(String(100), index=True)
-    edad = Column(Integer)
-    email = Column(String(100), unique=True, nullable=True)  # Nuevo campo
-    carrera = Column(String(100), nullable=True)  # Nuevo campo
+    __tablename__ = 'estudiantes'
+    __table_args__ = {'extend_existing': True}  # Importantísimo para tablas existentes
+    
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    nombre = Column(String(100), nullable=False)
+    edad = Column(Integer, nullable=False)
 
-# Crear las tablas en la base de datos si no existen
-try:
-    Base.metadata.create_all(bind=engine)
-    logger.info("Tablas de la base de datos verificadas/creadas")
-except Exception as e:
-    logger.error(f"Error al crear tablas: {e}")
+    # NO crear nuevas columnas para evitar conflictos
+    # email y carrera se manejarán diferente
 
-# Esquema Pydantic para validación de datos
+# Esquemas Pydantic
 class EstudianteSchema(BaseModel):
     nombre: str
     edad: int
-    email: str = None  # Nuevo campo opcional
-    carrera: str = None  # Nuevo campo opcional
 
     class Config:
         json_schema_extra = {
             "example": {
                 "nombre": "Juan Pérez",
-                "edad": 25,
-                "email": "juan@email.com",
-                "carrera": "Ingeniería en Sistemas"
+                "edad": 25
             }
         }
 
-class EstudianteUpdateSchema(BaseModel):
-    nombre: str = None
-    edad: int = None
-    email: str = None
-    carrera: str = None
+class EstudianteResponse(BaseModel):
+    id: int
+    nombre: str
+    edad: int
+
+    class Config:
+        from_attributes = True
 
 # Inicializar la aplicación FastAPI
 app = FastAPI(
     title="API de Gestión de Estudiantes",
     version="2.0.0",
-    description="API completa para gestión de información estudiantil con PostgreSQL",
+    description="API para gestión de estudiantes con base de datos existente",
     docs_url="/docs",
     redoc_url="/redoc"
 )
@@ -98,79 +98,50 @@ def get_db():
     finally:
         db.close()
 
-# Middleware para logging de requests
-@app.middleware("http")
-async def log_requests(request, call_next):
-    logger.info(f"Request: {request.method} {request.url}")
-    response = await call_next(request)
-    logger.info(f"Response: {response.status_code}")
-    return response
-
 # Rutas de la API
-@app.get("/", tags=["Home"], summary="Saludo de la API")
+@app.get("/", tags=["Home"])
 def home():
-    return {"message": "Bienvenido a la API de estudiantes!", "version": "2.0.0"}
+    return {"message": "Bienvenido a la API de estudiantes!", "database": "mq100216"}
 
-@app.get("/estudiantes/", tags=["Estudiantes"], summary="Obtiene todos los estudiantes")
+@app.get("/estudiantes/", response_model=list[EstudianteResponse], tags=["Estudiantes"])
 def obtener_estudiantes(db: Session = Depends(get_db)):
-    estudiantes = db.query(Estudiante).all()
-    return {
-        "count": len(estudiantes),
-        "estudiantes": [
-            {
-                "id": est.id, 
-                "nombre": est.nombre, 
-                "edad": est.edad,
-                "email": est.email,
-                "carrera": est.carrera
-            } for est in estudiantes
-        ]
-    }
+    """Obtiene todos los estudiantes de la tabla existente"""
+    estudiantes = db.query(Estudiante).order_by(Estudiante.id).all()
+    return estudiantes
 
-@app.get("/estudiantes/{id}", tags=["Estudiantes"], summary="Obtiene un estudiante por ID")
+@app.get("/estudiantes/{id}", response_model=EstudianteResponse, tags=["Estudiantes"])
 def obtener_estudiante_por_id(id: int = Path(..., ge=1), db: Session = Depends(get_db)):
+    """Obtiene un estudiante por ID"""
     estudiante = db.query(Estudiante).filter(Estudiante.id == id).first()
     if not estudiante:
         raise HTTPException(status_code=404, detail="Estudiante no encontrado")
     return estudiante
 
-@app.post("/estudiantes/", tags=["Estudiantes"], summary="Crea un nuevo estudiante")
+@app.post("/estudiantes/", response_model=EstudianteResponse, tags=["Estudiantes"])
 def crear_estudiante(estudiante: EstudianteSchema, db: Session = Depends(get_db)):
-    # Verificar si el email ya existe
-    if estudiante.email:
-        existing = db.query(Estudiante).filter(Estudiante.email == estudiante.email).first()
-        if existing:
-            raise HTTPException(status_code=400, detail="El email ya está registrado")
-    
-    db_estudiante = Estudiante(**estudiante.dict())
+    """Crea un nuevo estudiante en la tabla existente"""
+    db_estudiante = Estudiante(nombre=estudiante.nombre, edad=estudiante.edad)
     db.add(db_estudiante)
     db.commit()
     db.refresh(db_estudiante)
-    return {
-        "mensaje": "Estudiante creado exitosamente",
-        "estudiante": db_estudiante
-    }
+    return db_estudiante
 
-@app.put("/estudiantes/{id}", tags=["Estudiantes"], summary="Modifica un estudiante existente")
-def modificar_estudiante(id: int, estudiante: EstudianteUpdateSchema, db: Session = Depends(get_db)):
+@app.put("/estudiantes/{id}", response_model=EstudianteResponse, tags=["Estudiantes"])
+def modificar_estudiante(id: int, estudiante: EstudianteSchema, db: Session = Depends(get_db)):
+    """Modifica un estudiante existente"""
     est = db.query(Estudiante).filter(Estudiante.id == id).first()
     if not est:
         raise HTTPException(status_code=404, detail="Estudiante no encontrado")
     
-    # Actualizar solo los campos proporcionados
-    update_data = estudiante.dict(exclude_unset=True)
-    for field, value in update_data.items():
-        setattr(est, field, value)
-    
+    est.nombre = estudiante.nombre
+    est.edad = estudiante.edad
     db.commit()
     db.refresh(est)
-    return {
-        "mensaje": "Estudiante actualizado",
-        "estudiante": est
-    }
+    return est
 
-@app.delete("/estudiantes/{id}", tags=["Estudiantes"], summary="Elimina un estudiante")
+@app.delete("/estudiantes/{id}", tags=["Estudiantes"])
 def eliminar_estudiante(id: int, db: Session = Depends(get_db)):
+    """Elimina un estudiante"""
     est = db.query(Estudiante).filter(Estudiante.id == id).first()
     if not est:
         raise HTTPException(status_code=404, detail="Estudiante no encontrado")
@@ -179,24 +150,42 @@ def eliminar_estudiante(id: int, db: Session = Depends(get_db)):
     db.commit()
     return {"mensaje": "Estudiante eliminado exitosamente"}
 
-# Nueva ruta para health check
-@app.get("/health", tags=["Health"], summary="Verifica el estado de la API")
+@app.get("/health", tags=["Health"])
 def health_check(db: Session = Depends(get_db)):
+    """Verifica el estado de la conexión a la base de datos"""
     try:
-        db.execute("SELECT 1")
+        # Verificar que la tabla exista y tenga datos
+        count = db.query(Estudiante).count()
         return {
             "status": "healthy",
             "database": "connected",
-            "version": "2.0.0"
+            "table": "estudiantes",
+            "total_estudiantes": count,
+            "message": f"Conexión exitosa a la base de datos existente"
         }
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Database error: {str(e)}")
+        logger.error(f"Error en health check: {e}")
+        raise HTTPException(status_code=500, detail=f"Error de base de datos: {str(e)}")
 
-# Manejo de excepciones global
-@app.exception_handler(Exception)
-async def global_exception_handler(request, exc):
-    logger.error(f"Error no manejado: {exc}")
-    return JSONResponse(
-        status_code=500,
-        content={"message": "Error interno del servidor"}
-    )
+@app.get("/database-info", tags=["Debug"])
+def database_info(db: Session = Depends(get_db)):
+    """Información sobre la base de datos y tabla"""
+    try:
+        # Obtener información de la tabla
+        result = db.execute(text("""
+            SELECT COUNT(*) as total_estudiantes, 
+                   MIN(id) as min_id, 
+                   MAX(id) as max_id 
+            FROM estudiantes
+        """))
+        stats = result.first()
+        
+        return {
+            "database_name": "mq100216",
+            "table_name": "estudiantes",
+            "total_records": stats[0],
+            "id_range": f"{stats[1]} - {stats[2]}",
+            "columns": ["id", "nombre", "edad"]
+        }
+    except Exception as e:
+        return {"error": str(e)}
