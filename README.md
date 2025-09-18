@@ -1,6 +1,6 @@
 # 🚀 API REST para Gestión de Estudiantes - FastAPI
 
-Una API RESTful moderna desarrollada con FastAPI para la gestión integral de estudiantes, diseñada específicamente para aplicaciones móviles.
+Una API RESTful desarrollada con FastAPI para la gestión integral de estudiantes, diseñada específicamente para aplicaciones móviles.
 
 ## 🛠️ Tecnologías Utilizadas
 
