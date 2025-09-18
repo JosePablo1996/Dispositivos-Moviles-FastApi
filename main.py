@@ -6,7 +6,6 @@ from sqlalchemy.orm import declarative_base, sessionmaker, Session
 from urllib.parse import quote_plus
 import os
 import logging
-from typing import Optional
 
 # Configurar logging
 logging.basicConfig(level=logging.INFO)
@@ -77,7 +76,7 @@ API_KEYS = {
     "desarrollo_key_2025": "Key de Desarrollo y Testing"
 }
 
-# Función para validar API Key
+# Función para validar API Key (reemplaza get_api_key del módulo security)
 def validate_api_key(api_key: str = Header(..., alias="X-API-Key")):
     if api_key in API_KEYS:
         return api_key
@@ -96,18 +95,10 @@ app = FastAPI(
     redoc_url="/redoc"
 )
 
-# Configuración de CORS - ACTUALIZADO para React y Android
+# Configuración de CORS
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[
-        "http://localhost:3000",    # React development
-        "http://localhost:5173",    # Vite development
-        "http://localhost:8080",    # Android emulator
-        "http://localhost",         # Local development
-        "https://tu-app-react.vercel.app",  # Tu dominio de producción React
-        "https://*.render.com",     # Render deployments
-        "*"                         # Para desarrollo
-    ],
+    allow_origins=["*"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -203,12 +194,12 @@ def eliminar_estudiante_publico(id: int, db: Session = Depends(get_db)):
         raise HTTPException(status_code=500, detail=f"Error al eliminar estudiante: {str(e)}")
 
 # Endpoints protegidos (requieren API Key) - PARA ANDROID
-@app.get("/android/estudiantes/", response_model=list[EstudianteResponse], tags=["Estudiantes - Android"])
-def obtener_estudiantes_android(
+@app.get("/estudiantes/", response_model=list[EstudianteResponse], tags=["Estudiantes"])
+def obtener_estudiantes(
     db: Session = Depends(get_db),
     api_key: str = Security(validate_api_key)
 ):
-    """Obtiene todos los estudiantes (protegido - requiere API Key)"""
+    """Obtiene todos los estudiantes de la tabla existente (requiere API Key)"""
     try:
         estudiantes = db.query(Estudiante).order_by(Estudiante.id).all()
         logger.info(f"API Key utilizada: {api_key} - {API_KEYS[api_key]}")
@@ -217,13 +208,13 @@ def obtener_estudiantes_android(
         logger.error(f"Error al obtener estudiantes: {e}")
         raise HTTPException(status_code=500, detail=f"Error al obtener estudiantes: {str(e)}")
 
-@app.get("/android/estudiantes/{id}", response_model=EstudianteResponse, tags=["Estudiantes - Android"])
-def obtener_estudiante_android_por_id(
+@app.get("/estudiantes/{id}", response_model=EstudianteResponse, tags=["Estudiantes"])
+def obtener_estudiante_por_id(
     id: int = Path(..., ge=1), 
     db: Session = Depends(get_db),
     api_key: str = Security(validate_api_key)
 ):
-    """Obtiene un estudiante por ID (protegido - requiere API Key)"""
+    """Obtiene un estudiante por ID (requiere API Key)"""
     try:
         estudiante = db.query(Estudiante).filter(Estudiante.id == id).first()
         if not estudiante:
@@ -234,13 +225,13 @@ def obtener_estudiante_android_por_id(
         logger.error(f"Error al obtener estudiante {id}: {e}")
         raise HTTPException(status_code=500, detail=f"Error al obtener estudiante: {str(e)}")
 
-@app.post("/android/estudiantes/", response_model=EstudianteResponse, tags=["Estudiantes - Android"])
-def crear_estudiante_android(
+@app.post("/estudiantes/", response_model=EstudianteResponse, tags=["Estudiantes"])
+def crear_estudiante(
     estudiante: EstudianteSchema, 
     db: Session = Depends(get_db),
     api_key: str = Security(validate_api_key)
 ):
-    """Crea un nuevo estudiante (protegido - requiere API Key)"""
+    """Crea un nuevo estudiante en la tabla existente (requiere API Key)"""
     try:
         db_estudiante = Estudiante(nombre=estudiante.nombre, edad=estudiante.edad)
         db.add(db_estudiante)
@@ -253,14 +244,14 @@ def crear_estudiante_android(
         logger.error(f"Error al crear estudiante: {e}")
         raise HTTPException(status_code=500, detail=f"Error al crear estudiante: {str(e)}")
 
-@app.put("/android/estudiantes/{id}", response_model=EstudianteResponse, tags=["Estudiantes - Android"])
-def modificar_estudiante_android(
+@app.put("/estudiantes/{id}", response_model=EstudianteResponse, tags=["Estudiantes"])
+def modificar_estudiante(
     id: int, 
     estudiante: EstudianteSchema, 
     db: Session = Depends(get_db),
     api_key: str = Security(validate_api_key)
 ):
-    """Modifica un estudiante existente (protegido - requiere API Key)"""
+    """Modifica un estudiante existente (requiere API Key)"""
     try:
         est = db.query(Estudiante).filter(Estudiante.id == id).first()
         if not est:
@@ -277,13 +268,13 @@ def modificar_estudiante_android(
         logger.error(f"Error al modificar estudiante {id}: {e}")
         raise HTTPException(status_code=500, detail=f"Error al modificar estudiante: {str(e)}")
 
-@app.delete("/android/estudiantes/{id}", tags=["Estudiantes - Android"])
-def eliminar_estudiante_android(
+@app.delete("/estudiantes/{id}", tags=["Estudiantes"])
+def eliminar_estudiante(
     id: int, 
     db: Session = Depends(get_db),
     api_key: str = Security(validate_api_key)
 ):
-    """Elimina un estudiante (protegido - requiere API Key)"""
+    """Elimina un estudiante (requiere API Key)"""
     try:
         est = db.query(Estudiante).filter(Estudiante.id == id).first()
         if not est:
@@ -298,43 +289,80 @@ def eliminar_estudiante_android(
         logger.error(f"Error al eliminar estudiante {id}: {e}")
         raise HTTPException(status_code=500, detail=f"Error al eliminar estudiante: {str(e)}")
 
-# Endpoints de información
-@app.get("/api-key-info", tags=["Security"])
-def api_key_info():
-    """Información sobre las API Keys"""
-    return {
-        "api_key_required": "Solo para endpoints /android/",
-        "public_endpoints": "Disponibles en /public/estudiantes/",
-        "how_to_use": "Incluir header: X-API-Key: tu_api_key",
-        "available_keys": {
-            "android_app_key_2025": "Aplicación Android Principal",
-            "gestor_estudiantes_key_2025": "Gestor de Estudiantes Android", 
-            "desarrollo_key_2025": "Key de Desarrollo y Testing"
-        },
-        "note": "Endpoints /public/ no requieren API Key para React"
-    }
+@app.delete("/estudiantes/admin/delete-all", tags=["Estudiantes - Admin"])
+def eliminar_todos_estudiantes(
+    db: Session = Depends(get_db),
+    api_key: str = Security(validate_api_key),
+    confirmacion: bool = False
+):
+    """Elimina TODOS los estudiantes (requiere confirmación)"""
+    
+    if not confirmacion:
+        raise HTTPException(
+            status_code=400,
+            detail="Se requiere confirmación: agregar ?confirmacion=true"
+        )
+    
+    try:
+        # Contar antes de eliminar
+        total_antes = db.query(Estudiante).count()
+        
+        # Eliminar todos
+        db.query(Estudiante).delete()
+        db.commit()
+        
+        return {
+            "mensaje": "Todos los estudiantes eliminados",
+            "eliminados": total_antes,
+            "restantes": 0
+        }
+        
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(status_code=500, detail=f"Error: {str(e)}")
 
-@app.get("/api-status", tags=["Info"])
-def api_status():
-    """Estado de la API y configuración"""
+@app.get("/database-info", tags=["Debug"])
+def database_info(
+    db: Session = Depends(get_db),
+    api_key: str = Security(validate_api_key)
+):
+    """Información sobre la base de datos y tabla (requiere API Key)"""
+    try:
+        # Obtener información de la tabla
+        result = db.execute(text("""
+            SELECT COUNT(*) as total_estudiantes, 
+                   MIN(id) as min_id, 
+                   MAX(id) as max_id 
+            FROM estudiantes
+        """))
+        stats = result.first()
+        
+        return {
+            "database_name": "mq100216",
+            "table_name": "estudiantes",
+            "total_records": stats[0],
+            "id_range": f"{stats[1]} - {stats[2]}",
+            "columns": ["id", "nombre", "edad"],
+            "api_version": "2.0.0",
+            "security": "api_key_required"
+        }
+    except Exception as e:
+        return {"error": str(e)}
+
+# Endpoints públicos de información
+@app.get("/public-info", tags=["Info"])
+def public_info():
+    """Información pública sobre la API"""
     return {
-        "status": "active",
+        "api_name": "Gestión de Estudiantes API",
         "version": "2.0.0",
-        "database": "connected",
-        "cors_enabled": True,
-        "security_mode": "dual",
-        "android_endpoints": "Requieren API Key (/android/)",
-        "react_endpoints": "Públicos sin API Key (/public/)",
-        "message": "API con doble sistema de seguridad para Android y React"
+        "description": "API para gestión de estudiantes",
+        "requires_api_key": "Solo para endpoints /estudiantes/",
+        "public_endpoints": "Disponibles en /public/estudiantes/",
+        "android_endpoints": "Requieren API Key en /estudiantes/"
     }
 
-# Endpoint para verificar conexión simple
-@app.get("/ping", tags=["Health"])
-def ping():
-    """Endpoint simple para verificar que la API está funcionando"""
-    return {"message": "pong", "status": "online"}
-
-# Endpoint para verificar API Key
+# Nuevo endpoint para verificar API Key
 @app.get("/verify-api-key", tags=["Security"])
 def verify_api_key(api_key: str = Security(validate_api_key)):
     """Verifica si una API Key es válida"""
@@ -344,6 +372,12 @@ def verify_api_key(api_key: str = Security(validate_api_key)):
         "app_name": API_KEYS.get(api_key, "Desconocida"),
         "permissions": ["read:estudiantes", "write:estudiantes", "delete:estudiantes"]
     }
+
+# Endpoint para verificar conexión simple
+@app.get("/ping", tags=["Health"])
+def ping():
+    """Endpoint simple para verificar que la API está funcionando"""
+    return {"message": "pong", "status": "online"}
 
 # Endpoint para developers - muestra información de uso
 @app.get("/developer-info", tags=["Info"])
@@ -358,11 +392,11 @@ def developer_info():
                 "delete_estudiante": "DELETE /public/estudiantes/{id}"
             },
             "android_endpoints": {
-                "get_estudiantes": "GET /android/estudiantes/ (requiere API Key)",
-                "get_estudiante": "GET /android/estudiantes/{id} (requiere API Key)",
-                "create_estudiante": "POST /android/estudiantes/ (requiere API Key)",
-                "update_estudiante": "PUT /android/estudiantes/{id} (requiere API Key)",
-                "delete_estudiante": "DELETE /android/estudiantes/{id} (requiere API Key)"
+                "get_estudiantes": "GET /estudiantes/ (requiere API Key)",
+                "get_estudiante": "GET /estudiantes/{id} (requiere API Key)",
+                "create_estudiante": "POST /estudiantes/ (requiere API Key)",
+                "update_estudiante": "PUT /estudiantes/{id} (requiere API Key)",
+                "delete_estudiante": "DELETE /estudiantes/{id} (requiere API Key)"
             }
         },
         "api_keys": list(API_KEYS.keys()),
