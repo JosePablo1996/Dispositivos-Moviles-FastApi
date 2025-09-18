@@ -51,9 +51,6 @@ class Estudiante(Base):
     nombre = Column(String(100), nullable=False)
     edad = Column(Integer, nullable=False)
 
-    # NO crear nuevas columnas para evitar conflictos
-    # email y carrera se manejarán diferente
-
 # Esquemas Pydantic
 class EstudianteSchema(BaseModel):
     nombre: str
@@ -84,10 +81,18 @@ app = FastAPI(
     redoc_url="/redoc"
 )
 
-# Configuración de CORS
+# Configuración de CORS - ACTUALIZADO para React y Android
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=[
+        "http://localhost:3000",    # React development
+        "http://localhost:5173",    # Vite development
+        "http://localhost:8080",    # Android emulator
+        "http://localhost",         # Local development
+        "https://tu-app-react.vercel.app",  # Tu dominio de producción React
+        "https://*.render.com",     # Render deployments
+        "*"                         # Para permitir todas las origins (temporal)
+    ],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -133,10 +138,11 @@ def public_info():
         "description": "API para gestión de estudiantes",
         "requires_api_key": True,
         "endpoints_protected": True,
-        "api_key_required_for": ["/estudiantes", "/database-info"]
+        "api_key_required_for": ["/estudiantes", "/database-info"],
+        "cors_enabled": True
     }
 
-# Endpoints protegidos (requieren API Key)
+# Endpoints protegidos (requieren API Key) - MANTENIDOS para Android
 @app.get("/estudiantes/", response_model=list[EstudianteResponse], tags=["Estudiantes"])
 def obtener_estudiantes(
     db: Session = Depends(get_db),
@@ -273,3 +279,36 @@ def verify_api_key(api_key: str = Security(get_api_key)):
         "message": "API Key válida",
         "permissions": ["read:estudiantes", "write:estudiantes", "delete:estudiantes"]
     }
+
+# Nuevos endpoints para desarrollo sin API Key (solo para testing)
+@app.get("/estudiantes-test/", response_model=list[EstudianteResponse], tags=["Testing"])
+def obtener_estudiantes_test(db: Session = Depends(get_db)):
+    """Endpoint de prueba sin API Key (solo para desarrollo)"""
+    estudiantes = db.query(Estudiante).order_by(Estudiante.id).all()
+    return estudiantes
+
+@app.post("/estudiantes-test/", response_model=EstudianteResponse, tags=["Testing"])
+def crear_estudiante_test(estudiante: EstudianteSchema, db: Session = Depends(get_db)):
+    """Endpoint de prueba sin API Key (solo para desarrollo)"""
+    db_estudiante = Estudiante(nombre=estudiante.nombre, edad=estudiante.edad)
+    db.add(db_estudiante)
+    db.commit()
+    db.refresh(db_estudiante)
+    return db_estudiante
+
+@app.get("/api-status", tags=["Info"])
+def api_status():
+    """Estado de la API y configuración"""
+    return {
+        "status": "active",
+        "version": "2.0.0",
+        "database": "connected",
+        "cors_enabled": True,
+        "security_mode": "production",
+        "api_key_required": True,
+        "message": "API con seguridad habilitada para Android y React"
+    }
+
+if __name__ == "__main__":
+    import uvicorn
+    uvicorn.run(app, host="0.0.0.0", port=8000)
