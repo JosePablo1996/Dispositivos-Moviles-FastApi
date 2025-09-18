@@ -178,12 +178,12 @@ ACCESS_TOKEN_EXPIRE_MINUTES=30
 📄 Licencia
 
 Este proyecto está bajo la Licencia MIT. Ver archivo LICENSE para más detalles.
-👨‍💻 Autor
 
+
+👨‍💻 Autor
 José Pablo - GitHub
 
-Desarrollado para el curso de Dispositivos Móviles - 2025
-EOF
+Desarrollado para el curso de Dispositivos Móviles -2025_José Pablo Miranda Quintanilla
 
 
 
